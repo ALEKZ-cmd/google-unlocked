@@ -18,6 +18,62 @@
 
 /* eslint-env browser, es6, greasemonkey, jquery */
 
+function normalizeNoticeUrl(rawUrl) {
+    if (!rawUrl) return null
+
+    let candidate = rawUrl.trim()
+    if (!candidate) return null
+    if (!/^https?:\/\//i.test(candidate)) candidate = `http://${candidate}`
+
+    try {
+        return new URL(candidate).href
+    } catch (error) {
+        return null
+    }
+}
+
+function parseNoticeEntries(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const entries = []
+
+    doc.querySelectorAll('.infringing_url').forEach(element => {
+        const text = element.textContent.replace(/\s+/g, ' ').trim()
+        const countMatch = text.match(/[-–—•]\s*(\d+)\s*$/)
+        const link = element.querySelector('a[href]')
+        const rawUrl = link
+            ? (link.getAttribute('href') || link.textContent)
+            : text.replace(/\s*[-–—•]\s*\d+\s*$/, '')
+        const href = normalizeNoticeUrl(rawUrl)
+
+        if (!countMatch || !href) return
+
+        entries.push({
+            count: countMatch[1],
+            href,
+            label: href.replace(/^https?:\/\//i, '').replace(/\/$/, '')
+        })
+    })
+
+    return entries
+}
+
+function appendNoticeEntry(container, entry) {
+    let group = $(`#l${entry.count}`)
+    if (group.length < 1) {
+        container.prepend(`<div id="l${entry.count}" data-num="${entry.count}"></div>`)
+        group = $(`#l${entry.count}`)
+    }
+
+    const result = $('<div>', { class: 'g' })
+    $('<a>', {
+        href: entry.href,
+        rel: 'noopener noreferrer',
+        target: '_blank',
+        text: `${entry.label} (${entry.count} URLs)`
+    }).appendTo(result)
+    group.append(result)
+}
+
 $(function () {
     if (window.location.href.indexOf('//www.google') === -1) return;
 
@@ -72,23 +128,14 @@ $(function () {
                         reject()
                         return;
                     }
-                    let hm = {}
-                    const links = response.responseText.matchAll(/class="infringing_url">([^\s-<]+)\s*-\s*([0-9]+)/g)
+                    const hm = {}
+                    const links = parseNoticeEntries(response.responseText)
 
-                    for (const i of links) {
-                        if (i[1] in hm) continue;
+                    for (const entry of links) {
+                        if (entry.href in hm) continue
 
-                        hm[i[1]] = 1
-                        let l = $('#l' + i[2])
-                        if (l.length < 1) {
-                            s.prepend(`<div id="l${i[2]}" data-num="${i[2]}"></div>`)
-                            l = $('#l' + i[2])
-                        }
-                        l.append(`
-                        <div class="g">
-                           <a href="http://${i[1]}" target="_blank">${i[1]} (${i[2]} URLs)</a>
-                        </div>
-                        `)
+                        hm[entry.href] = 1
+                        appendNoticeEntry(s, entry)
                     }
                     const divs = $('div[data-num]', s)
                     divs.sort((a, b) => b.dataset.num - a.dataset.num)
